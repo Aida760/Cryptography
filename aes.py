@@ -150,15 +150,25 @@ class AES:
             s[3][i] ^= t ^ xtime(s[3][i] ^ u)
 
     def __inv_mix_columns(self, s):
-        for i in range(4):
-            u = xtime(xtime(s[0][i] ^ s[2][i]))
-            v = xtime(xtime(s[1][i] ^ s[3][i]))
-            s[0][i] ^= u
-            s[1][i] ^= v
-            s[2][i] ^= u
-            s[3][i] ^= v
+    # Galois Field multiplication helper for GF(2^8)
+    def gmul(a, b):
+        p = 0
+        for _ in range(8):
+            if b & 1:
+                p ^= a
+            hi_bit_set = a & 0x80
+            a = (a << 1) & 0xFF
+            if hi_bit_set:
+                a ^= 0x1B
+            b >>= 1
+        return p
 
-        self.__mix_columns(s)
+    for i in range(4):
+        col = [s[0][i], s[1][i], s[2][i], s[3][i]]
+        s[0][i] = gmul(col[0], 0x0E) ^ gmul(col[1], 0x0B) ^ gmul(col[2], 0x0D) ^ gmul(col[3], 0x09)
+        s[1][i] = gmul(col[0], 0x09) ^ gmul(col[1], 0x0E) ^ gmul(col[2], 0x0B) ^ gmul(col[3], 0x0D)
+        s[2][i] = gmul(col[0], 0x0D) ^ gmul(col[1], 0x09) ^ gmul(col[2], 0x0E) ^ gmul(col[3], 0x0B)
+        s[3][i] = gmul(col[0], 0x0B) ^ gmul(col[1], 0x0D) ^ gmul(col[2], 0x09) ^ gmul(col[3], 0x0E)
 
 def xtime(a):
     return (((a << 1) ^ 0x1B) & 0xFF) if (a & 0x80) else (a << 1)
