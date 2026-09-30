@@ -1,95 +1,89 @@
-# modes.py
-from aes import aes_encrypt_block, aes_decrypt_block
-
-BLOCK_SIZE = 16
-
-
+from aes import AES
 
 def pad(data: bytes) -> bytes:
-    pad_len = BLOCK_SIZE - (len(data) % BLOCK_SIZE)
+    pad_len = 16 - (len(data) % 16)
     return data + bytes([pad_len] * pad_len)
 
 def unpad(data: bytes) -> bytes:
-    if not data:
-        return b''
     pad_len = data[-1]
-    if pad_len > BLOCK_SIZE or pad_len == 0:
-        raise ValueError("Invalid padding")
-
-    if data[-pad_len:] != bytes([pad_len] * pad_len):
-        raise ValueError("Invalid padding bytes")
     return data[:-pad_len]
 
-def xor_bytes(a: bytes, b: bytes) -> bytes:
-    return bytes(x ^ y for x, y in zip(a, b))
+class ECB:
+    def __init__(self, key: bytes):
+        self.aes = AES(key)
 
+    def encrypt(self, plaintext: bytes) -> bytes:
+        padded = pad(plaintext)
+        res = b""
+        for i in range(0, len(padded), 16):
+            res += self.aes.encrypt_block(padded[i:i+16])
+        return res
 
+    def decrypt(self, ciphertext: bytes) -> bytes:
+        res = b""
+        for i in range(0, len(ciphertext), 16):
+            res += self.aes.decrypt_block(ciphertext[i:i+16])
+        return unpad(res)
 
-def ecb_encrypt(key: bytes, plaintext: bytes) -> bytes:
-    padded_data = pad(plaintext)
-    ciphertext = b""
-    for i in range(0, len(padded_data), BLOCK_SIZE):
-        block = padded_data[i:i + BLOCK_SIZE]
-        ciphertext += aes_encrypt_block(key, block)
-    return ciphertext
+class CBC:
+    def __init__(self, key: bytes, iv: bytes):
+        self.aes = AES(key)
+        self.iv = iv
 
-def ecb_decrypt(key: bytes, ciphertext: bytes) -> bytes:
-    plaintext = b""
-    for i in range(0, len(ciphertext), BLOCK_SIZE):
-        block = ciphertext[i:i + BLOCK_SIZE]
-        plaintext += aes_decrypt_block(key, block)
-    return unpad(plaintext)
+    def encrypt(self, plaintext: bytes) -> bytes:
+        padded = pad(plaintext)
+        res = b""
+        prev = self.iv
+        for i in range(0, len(padded), 16):
+            block = padded[i:i+16]
+            xored = bytes(b1 ^ b2 for b1, b2 in zip(block, prev))
+            enc = self.aes.encrypt_block(xored)
+            res += enc
+            prev = enc
+        return res
 
+    def decrypt(self, ciphertext: bytes) -> bytes:
+        res = b""
+        prev = self.iv
+        for i in range(0, len(ciphertext), 16):
+            block = ciphertext[i:i+16]
+            dec = self.aes.decrypt_block(block)
+            res += bytes(b1 ^ b2 for b1, b2 in zip(dec, prev))
+            prev = block
+        return unpad(res)
 
+class OFB:
+    def __init__(self, key: bytes, iv: bytes):
+        self.aes = AES(key)
+        self.iv = iv
 
-def cbc_encrypt(key: bytes, plaintext: bytes, iv: bytes) -> bytes:
-    padded_data = pad(plaintext)
-    ciphertext = b""
-    prev = iv
-    for i in range(0, len(padded_data), BLOCK_SIZE):
-        block = padded_data[i:i + BLOCK_SIZE]
-        xored = xor_bytes(block, prev)
-        enc = aes_encrypt_block(key, xored)
-        ciphertext += enc
-        prev = enc
-    return ciphertext
+    def encrypt(self, plaintext: bytes) -> bytes:
+        res = b""
+        curr_iv = self.iv
+        for i in range(0, len(plaintext), 16):
+            curr_iv = self.aes.encrypt_block(curr_iv)
+            block = plaintext[i:i+16]
+            res += bytes(b1 ^ b2 for b1, b2 in zip(block, curr_iv))
+        return res
 
-def cbc_decrypt(key: bytes, ciphertext: bytes, iv: bytes) -> bytes:
-    plaintext = b""
-    prev = iv
-    for i in range(0, len(ciphertext), BLOCK_SIZE):
-        block = ciphertext[i:i + BLOCK_SIZE]
-        dec = aes_decrypt_block(key, block)
-        plaintext += xor_bytes(dec, prev)
-        prev = block
-    return unpad(plaintext)
+    def decrypt(self, ciphertext: bytes) -> bytes:
+        return self.encrypt(ciphertext)
 
+class CTR:
+    def __init__(self, key: bytes, nonce: bytes):
+        self.aes = AES(key)
+        self.nonce = nonce
 
+    def encrypt(self, plaintext: bytes) -> bytes:
+        res = b""
+        counter = 0
+        for i in range(0, len(plaintext), 16):
+            ctr_block = self.nonce + counter.to_bytes(8, 'big')
+            keystream = self.aes.encrypt_block(ctr_block)
+            block = plaintext[i:i+16]
+            res += bytes(b1 ^ b2 for b1, b2 in zip(block, keystream))
+            counter += 1
+        return res
 
-def ofb_encrypt(key: bytes, plaintext: bytes, iv: bytes) -> bytes:
-    output = b""
-    stream = iv
-    for i in range(0, len(plaintext), BLOCK_SIZE):
-        stream = aes_encrypt_block(key, stream)
-        chunk = plaintext[i:i + BLOCK_SIZE]
-        output += xor_bytes(chunk, stream[:len(chunk)])
-    return output
-
-def ofb_decrypt(key: bytes, ciphertext: bytes, iv: bytes) -> bytes:
-    return ofb_encrypt(key, ciphertext, iv)
-
-
-
-def ctr_encrypt(key: bytes, plaintext: bytes, nonce: bytes) -> bytes:
-    output = b""
-    counter = 0
-    for i in range(0, len(plaintext), BLOCK_SIZE):
-        counter_block = nonce + counter.to_bytes(8, byteorder="big")
-        keystream = aes_encrypt_block(key, counter_block)
-        chunk = plaintext[i:i + BLOCK_SIZE]
-        output += xor_bytes(chunk, keystream[:len(chunk)])
-        counter += 1
-    return output
-
-def ctr_decrypt(key: bytes, ciphertext: bytes, nonce: bytes) -> bytes:
-    return ctr_encrypt(key, ciphertext, nonce)
+    def decrypt(self, ciphertext: bytes) -> bytes:
+        return self.encrypt(ciphertext)
